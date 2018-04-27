@@ -1,0 +1,266 @@
+(require srfi/1)
+(require srfi/13)
+(require srfi/48)
+
+
+
+
+
+;the structure representing a maze size n and
+(struct maze (N M tbl))
+
+;;managing cell properties
+;; A dictionary is an instance of a datatype that maps keys to values i.e hash table list, structures
+(define (connections tbl c) (dict-ref tbl c ' ()))
+
+;;dict-set! maps key to v in dict, overwritting any existing mapping for key
+(define (connect! tbl c n)
+  (dict-set! tbl c (cons n (connections tbl c)))
+  (dict-set! tbl n (cons c (connections tbl n))))
+(define (connected? tbl a b) (member a (connections tbl b)))
+
+;;returns a maze of a given size
+;;build-maze index index -> maze
+(define (build-maze N M)
+  (define tbl (make-hash))
+  (define (visited? tbl c) (dict-has-key? tbl c))
+  (define (neigbours c)
+    (filter
+     (match-lambda [(list i j) (and (<= 0 i (- N 1)) (<= 0 j (- M 1)))])
+     (for/list ([d '((0 1) (0 -1) (-1 0) (1 0))]) (map + c d))))
+
+  ;generate the maze
+  (let move-to-cell ([c (list (random N) (random M))])
+    (for ([n (shuffle (neigbours c))] #:unless (visited? tbl n))
+      (connect! tbl c n)
+      (move-to-cell n)))
+  ;return the result
+  (maze N M tbl))
+
+;;shows a maze
+;(define (show-maze m)
+ ; (match-define (maze N M tbl) m)
+ ; (for ([i N]) (display "+---"))
+ ; (displayln "+")
+ ; (for ([j M ])
+  ;  (display "|")
+   ; (for ([i (- N 1)])
+    ;  (if (connected? tbl (list i j) (list (+ 1 i) j))
+     ;     (display "    ")
+   ;       (display "   |")))
+   ; (display "   |")
+   ; (newline)
+   ; (for ([i N])
+    ;  (if (connected? tbl (list i j) (list i (+ j 1)))
+    ;      (display "+   ")
+    ;      (display "+---")))
+  ;  (displayln "+"))
+  ;(newline))
+
+
+
+
+
+
+
+;;users config
+(define X 5)
+(define Y 5)
+(define start '(0 0))
+
+;;include maze algorith with x and y as M and N
+
+(define m (build-maze 4 3 ))
+
+;;the paths function provides the available directions
+
+(define (paths start)
+  (match-define (maze N M tbl) m)
+  (map (lambda (x)
+         (let ((first (map = start x))
+               (second (map < start x)))
+           (cond [(car first)
+                  (if (cadr second) 'down 'up)]
+                 [else
+                  (if (car second) 'right 'left)]) ))
+         (connections tbl start)))
+
+
+
+  (define (move-x room fun)
+    (cons (car room) (map (lambda(x) (fun x 1)) (cdr room))))
+    (define (move-y room fun)
+      (cons (fun (car room) 1) (cdr room)))
+
+    (define (lookup room direction)
+      (cond [(eq? direction 'down)
+             (move-x room +)]
+            [(eq? direction 'up)
+             (move-x room -)]
+            [(eq? direction 'left)
+             (move-y room -)]
+            [(eq? direction 'right)
+             (move-y room +)]))
+
+    ;;main function 
+
+    (define (startgame room-id)
+      (let loop ((rid room-id))
+        (show-maze m rid)
+        (printf "you are in the ~a\n>" (hash-ref rooms rid))
+        (let ((input (read)))
+          (cond [(eq? input 'quit) (exit)]) ;;help with paths
+          (cond [(eq? input 'pick) (pick-item rid  input)])
+          (cond [(eq? input 'put)  (put-item  input)])
+          ;;(cond [(eq? input 'look) (look-item input)])
+          
+          
+          
+          (if (member input (paths rid))
+              (let ((direction (lookup rid input)))
+                (cond ((equal? rid direction) (loop rid))
+                      ((equal? direction (list (- X 1)(- Y 1)))
+                       (show-maze m direction)
+                       (displayln "You have reached the exit door.")
+
+                       (exit))
+                      (else
+                       (loop direction))))
+              (begin
+                (printf "huh? I didn't understand: ~a\n" input)
+                (loop rid))))))
+    
+    ;;room names randomly allocated
+
+    (define room-type '( (0 "Entrance")
+                         (1 "hall")
+                         (2 "hallway")
+                         (3 "corridor")
+                         (4 "lobby")
+                         (5 "hallway")
+                         (6 "court")
+                         (7 "pass")))
+;;objects
+(define objects '((0 "golden dagger")
+                  (1 "a health kit")
+                  (2 "shield")
+                  (3 "zeldas sword")
+                  (4 "rock")
+                  (5 "flame thrower")
+                  (6 "torch")
+                  (7 "green portion")))
+
+
+(define look '(((directions) look) ((look) look) ((examine room) look)))
+(define quit '(((exit game) quit) ((quit game) quit) ((exit) quit) ((quit) quit)))
+(define pick '(((get) pick) ((pickup) pick) ((pick) pick)))
+(define put '(((put) drop) ((drop) drop) ((place) drop) ((remove) drop)))
+(define inventory '(((inventory) inventory) ((bag) inventory)))
+(define actions `(,@look ,@quit,@pick,@put,@inventory))
+
+
+
+;hash table this will keep track of what is in the room and what is being carried
+;object database, defining objects
+(define objectdb (make-hash))
+(define inventorydb (make-hash))
+
+(define (add-object db id object)
+  (if (hash-has-key? db id)
+      (let ((record (hash-ref db id)))
+        (hash-set! db id (cons object record)))
+      (hash-set! db id (cons object empty))))
+
+  (define (add-objects db)
+    (for-each
+     (lambda (r)
+       (add-object db (first r) (second r))) objects))
+  
+  (add-objects objectdb)
+
+
+  ;displaying objects
+
+  (define (display-objects db id)
+    (when (hash-has-key? db id)
+      (let* ((record (hash-ref db id))
+             (output (string-join record " and ")))
+        (if (eq? id 'bag)
+            (printf "you are carrying ~a.\n" output)
+            (printf "you can see ~a.\n" output)))))
+;removing objects from rooms
+
+(define (remove-object-from-room db id str)
+  (when (hash-has-key? db id)
+    (let* ((record (hash-ref db id))
+           (result (remove (lambda (x) (string-suffix-ci? str x)) record))
+           (item (lset-difference equal? record result)))
+      (cond ((null? item)
+             (printf "i don't see that item in the room!\n"))
+            (else
+             (printf "added ~a to your bag.\n" (first item))
+             (add-object inventorydb 'bag (first item))
+             (hash-set! db id result))))))
+;removing objects from your inventory
+
+(define (remove-object-from-inventory db id str)
+  (when (hash-has-key? db 'bag)
+    (let* ((record (hash-ref db 'bag))
+           (result (remove (lambda (x) (string-suffix-ci? str x)) record))
+           (item (lset-difference equal? record result)))
+           (cond ((null? item)
+                  (printf "removed -a from your bag.\n" (first item))
+                  (add-object objectdb id (first item))
+                  (hash-set! db 'bag result))))))
+ ;calling functions
+
+  (define (pick-item id input)
+    (let ((item (string-join (cdr (string-split input)))))
+          (remove-object-from-room objectdb id item)))
+
+    (define (put-item id input)
+      (let ((item (string-join (cdr (string-split input)))))
+        (remove-object-from-inventory inventorydb id item)))
+  
+  (define (display-inventory)
+    (display-objects inventorydb 'bag))
+    
+    (define (assq-ref assqlist id)
+      (cadr (assq id assqlist)))
+
+    (define rooms (make-hash))
+
+    (define (room-allocator db types)
+      (for ((j X))
+        (for ((i Y))
+          (hash-set! db (list j i) (assq-ref types (random (- (length types) 1)))))))
+
+    (room-allocator rooms room-type)
+
+    ;;show maze with user location
+
+    (define (show-maze m pos)
+      (match-define (maze X Y tbl) m)
+      (for ([i X]) (display "+---"))
+      (displayln "+")
+      (for ([j Y])
+        (display "|")
+        (for ([i (- X 0)])
+          (if (equal? (list i j) pos)
+              (display " *")
+              (display "  "))
+          (if (connected? tbl (list i j) (list (+ 1 i) j))
+              (display "  ")
+              (display " |")))
+        (newline)
+        (for ([i X])
+          (if (connected? tbl (list i j) (list i (+ j 1)))
+              (display "+   ")
+              (display "+---")))
+        (displayln "+")))
+
+
+
+
+
+(startgame start)
